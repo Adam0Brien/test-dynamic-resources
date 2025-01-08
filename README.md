@@ -6,6 +6,11 @@
 # Run
 `go run main.go`
 
+# Check db
+```sh 
+curl -X GET http://localhost:8080/resource-data | jq
+```
+
 # API Request
 
 ## Add new resource type
@@ -33,7 +38,7 @@ or alternatively use a JSON payload
 ```sh
 curl --location 'http://localhost:8080/resource-types' \
 --header 'Content-Type: application/json' \
---data @data/k8s-cluster-type.json
+--data @data/resource_types/k8s_cluster.json
 ```
 
 # Create Resource
@@ -52,7 +57,7 @@ or alternatively use a JSON payload
 ```sh
 curl --location 'http://localhost:8080/resource-data/k8s_cluster' \
 --header 'Content-Type: application/json' \
---data @data/k8s-cluster-data.json
+--data @data/resource_data/k8s_cluster.json
 ```
 
 # Stop postgres database

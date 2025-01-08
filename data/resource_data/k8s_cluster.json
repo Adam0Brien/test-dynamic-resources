@@ -1,0 +1,38 @@
+[
+  {
+    "k8s_cluster": {
+      "external_cluster_id": 143,
+      "cluster_status": "READY"
+    }
+  },
+  {
+    "k8s_cluster": {
+      "external_cluster_id": 144,
+      "cluster_status": "READY"
+    }
+  },
+  {
+    "k8s_cluster": {
+      "external_cluster_id": 145,
+      "cluster_status": "READY"
+    }
+  },
+  {
+    "k8s_cluster": {
+      "external_cluster_id": 146,
+      "cluster_status": "READY"
+    }
+  },
+  {
+    "k8s_cluster": {
+      "external_cluster_id": 147,
+      "cluster_status": "READY"
+    }
+  },
+  {
+    "k8s_cluster": {
+      "external_cluster_id": 148,
+      "cluster_status": "READY"
+    }
+  }
+]

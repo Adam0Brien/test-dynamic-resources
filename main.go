@@ -6,12 +6,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/qri-io/jsonschema"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"path/filepath"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/gorilla/mux"
+	"github.com/qri-io/jsonschema"
+
 	_ "github.com/lib/pq"
 )
 
@@ -30,6 +33,11 @@ type ResourceData struct {
 var (
 	db       *sql.DB
 	validate *validator.Validate
+)
+
+const (
+	resourceTypesDir = "data/resource_types"
+	resourceDataDir  = "data/resource_data"
 )
 
 func initDB() {
@@ -61,14 +69,118 @@ func initDB() {
 	log.Println("Database initialized successfully.")
 }
 
+func loadResourceTypes() {
+	files, err := ioutil.ReadDir(resourceTypesDir)
+	if err != nil {
+		log.Fatalf("Failed to read resource types directory: %v", err)
+	}
+
+	for _, file := range files {
+		if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
+			continue
+		}
+
+		filePath := filepath.Join(resourceTypesDir, file.Name())
+		var resourceType ResourceType
+
+		data, err := ioutil.ReadFile(filePath)
+		if err != nil {
+			log.Printf("Failed to read file '%s': %v", filePath, err)
+			continue
+		}
+
+		if err := json.Unmarshal(data, &resourceType); err != nil {
+			log.Printf("Failed to parse JSON in '%s': %v", filePath, err)
+			continue
+		}
+
+		// checks if resource type already exists
+		var id int
+		query := `SELECT id FROM resource_types WHERE name = $1`
+		err = db.QueryRow(query, resourceType.Name).Scan(&id)
+		if err == sql.ErrNoRows {
+			query = `INSERT INTO resource_types (name, schema) VALUES ($1, $2)`
+			_, err = db.Exec(query, resourceType.Name, resourceType.Schema)
+			if err != nil {
+				log.Printf("Failed to insert resource type '%s': %v", resourceType.Name, err)
+			} else {
+				log.Printf("Inserted resource type: %s", resourceType.Name)
+			}
+		} else {
+			log.Printf("Resource type '%s' already exists", resourceType.Name)
+		}
+	}
+}
+
+func loadResourceData() {
+	files, err := ioutil.ReadDir(resourceDataDir)
+	if err != nil {
+		log.Fatalf("Failed to read resource data directory: %v", err)
+	}
+
+	for _, file := range files {
+		if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
+			continue
+		}
+
+		resourceTypeName := file.Name()[:len(file.Name())-len(filepath.Ext(file.Name()))]
+		filePath := filepath.Join(resourceDataDir, file.Name())
+
+		// Fetch the resource type ID and schema
+		var resourceType ResourceType
+		query := `SELECT id, schema FROM resource_types WHERE name = $1`
+		err := db.QueryRow(query, resourceTypeName).Scan(&resourceType.ID, &resourceType.Schema)
+		if err == sql.ErrNoRows {
+			log.Printf("Resource type '%s' not found for file '%s'", resourceTypeName, filePath)
+			continue
+		} else if err != nil {
+			log.Printf("Failed to fetch resource type '%s': %v", resourceTypeName, err)
+			continue
+		}
+
+		// Read the resource data file
+		data, err := ioutil.ReadFile(filePath)
+		if err != nil {
+			log.Printf("Failed to read file '%s': %v", filePath, err)
+			continue
+		}
+
+		var resourceData []json.RawMessage
+		if err := json.Unmarshal(data, &resourceData); err != nil {
+			log.Printf("Failed to parse JSON in '%s': %v", filePath, err)
+			continue
+		}
+
+		// Validate and insert each entry
+		for _, entry := range resourceData {
+			if !validateJSONAgainstSchema(resourceType.Schema, entry) {
+				log.Printf("Validation failed for resource data in file '%s': %s", filePath, entry)
+				continue
+			}
+
+			query = `INSERT INTO resource_data (resource_type_id, data) VALUES ($1, $2)`
+			_, err := db.Exec(query, resourceType.ID, entry)
+			if err != nil {
+				log.Printf("Failed to insert resource data for '%s': %v", resourceTypeName, err)
+			}
+		}
+
+		log.Printf("Loaded and validated resource data from file: %s", filePath)
+	}
+}
+
 func main() {
 	initDB()
 	defer db.Close()
 	validate = validator.New()
+	loadResourceTypes()
+	loadResourceData()
 
 	router := mux.NewRouter()
-	router.HandleFunc("/resource-types", createResourceType).Methods("POST")
-	router.HandleFunc("/resource-data/{resource_type_name}", validateAndStoreResourceData).Methods("POST")
+	//router.HandleFunc("/resource-types", createResourceType).Methods("POST")
+	//router.HandleFunc("/resource-data/{resource_type_name}", validateAndStoreResourceData).Methods("POST")
+
+	router.HandleFunc("/resource-data", getAllResourceData).Methods("GET")
 
 	log.Println("Starting server on :8080...")
 	log.Fatal(http.ListenAndServe(":8080", router))
@@ -139,6 +251,50 @@ func validateAndStoreResourceData(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(resourceData)
+}
+
+type ResourceDataEntry struct {
+	ResourceType string          `json:"resource_type"`
+	Data         json.RawMessage `json:"data"`
+	CreatedAt    string          `json:"created_at"`
+}
+
+// getAllResourceData fetches all resource data and returns it as JSON
+func getAllResourceData(w http.ResponseWriter, r *http.Request) {
+	// Query to fetch all resource data along with resource type names
+	query := `
+		SELECT rt.name AS resource_type, rd.data, rd.created_at
+		FROM resource_data rd
+		INNER JOIN resource_types rt ON rd.resource_type_id = rt.id
+		ORDER BY rd.created_at DESC
+	`
+
+	// Execute the query
+	rows, err := db.Query(query)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to query resource data: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var results []ResourceDataEntry
+
+	// Iterate through the results
+	for rows.Next() {
+		var entry ResourceDataEntry
+		if err := rows.Scan(&entry.ResourceType, &entry.Data, &entry.CreatedAt); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse query results: %v", err), http.StatusInternalServerError)
+			return
+		}
+		results = append(results, entry)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, fmt.Sprintf("Error iterating through rows: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
 }
 
 // validateJSONAgainstSchema validates data against a JSON schema

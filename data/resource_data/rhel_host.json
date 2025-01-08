@@ -1,0 +1,22 @@
+[
+  {
+    "rhel_host": {
+      "metadata": {
+        "workspace_id": "01932c7e-e93e-719c-a488-3159877367b0"
+      },
+      "reporter_data": {
+        "reporter_type": "OCM"
+      }
+    }
+  },
+  {
+    "rhel_host": {
+      "metadata": {
+        "workspace_id": "01932c7e-e93e-719c-a488-3123456367b0"
+      },
+      "reporter_data": {
+        "reporter_type": "ACM"
+      }
+    }
+  }
+]
